@@ -7,32 +7,32 @@ mod linker;
 mod peeker;
 
 use builder::build_tree;
+use clap::{ArgAction, Parser};
 use error::Errors;
 use linker::link_tree;
 use log::LevelFilter;
 use peeker::print_variables;
 use std::env;
 use std::path::PathBuf;
-use structopt::StructOpt;
 
-#[derive(StructOpt)]
-struct Opt {
-    #[structopt(short, long, env = "DOTFILES_PATH")]
+#[derive(Parser)]
+struct Args {
+    #[arg(short, long, env = "DOTFILES_PATH")]
     template_dir: Option<PathBuf>,
 
-    #[structopt(short, long)]
+    #[arg(short, long)]
     build_dir: Option<PathBuf>,
 
-    #[structopt(short, long)]
+    #[arg(short, long)]
     link_dir: Option<PathBuf>,
 
-    #[structopt(long = "variables")]
+    #[arg(long = "variables")]
     variables_path: Option<PathBuf>,
 
-    #[structopt(short, long)]
+    #[arg(short, long)]
     print_variables: bool,
 
-    #[structopt(short, parse(from_occurrences))]
+    #[arg(short, action = ArgAction::Count)]
     verbosity: u8,
 
     flags: Vec<String>,
@@ -56,7 +56,7 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Errors> {
-    let opt = Opt::from_args();
+    let opt = Args::parse();
 
     let filter_level = match opt.verbosity {
         0 => LevelFilter::Warn,
