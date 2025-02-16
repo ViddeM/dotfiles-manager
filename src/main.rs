@@ -7,7 +7,7 @@ mod linker;
 mod peeker;
 
 use builder::build_tree;
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, Subcommand};
 use error::Errors;
 use linker::link_tree;
 use log::LevelFilter;
@@ -29,13 +29,20 @@ struct Args {
     #[arg(long = "variables")]
     variables_path: Option<PathBuf>,
 
-    #[arg(short, long)]
-    print_variables: bool,
-
     #[arg(short, action = ArgAction::Count)]
     verbosity: u8,
 
     flags: Vec<String>,
+
+    #[command(subcommand)]
+    action: Action,
+}
+
+#[derive(Subcommand)]
+enum Action {
+    Sync,
+    Diff,
+    Print,
 }
 
 #[derive(Debug)]
@@ -87,15 +94,25 @@ async fn run() -> Result<(), Errors> {
         flags: opt.flags,
     };
 
-    if opt.print_variables {
-        info!("scanning tree");
-        print_variables(&cfg).await?;
-    } else {
-        info!("building tree");
-        build_tree(&cfg).await?;
+    match opt.action {
+        Action::Sync => {
+            info!("building tree");
+            build_tree(&cfg).await?;
 
-        info!("linking tree");
-        link_tree(&cfg).await?;
+            info!("linking tree");
+            link_tree(&cfg).await?;
+        }
+        Action::Diff => {
+            info!("building tree");
+            build_tree(&cfg).await?;
+
+            info!("checking differences between current state and dotfiles");
+            todo!("not implemented");
+        }
+        Action::Print => {
+            info!("scanning tree");
+            print_variables(&cfg).await?;
+        }
     }
 
     Ok(())
