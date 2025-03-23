@@ -16,3 +16,6 @@ xdg = "2.5.2"
 blueprint = { git = "https://git.nubo.sh/hulthe/blueprint.git", rev = "92df583316" }
 async-recursion = "1.1.1"
 clap = { version = "4.5.29", features = ["derive", "env"] }
+tempdir = "0.3.7"
+similar = "2.7.0"
+sha2 = "0.10.8"

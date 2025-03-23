@@ -59,7 +59,10 @@ async fn dir(cfg: &Config, env: &Env, relative: PathBuf) -> Result<(), Errors> {
     let template_path = cfg.template_dir.join(&relative);
     let build_path = cfg.build_dir.join(&relative);
 
-    info!("traversing {:?}", template_path);
+    info!(
+        "traversing {:?} (corresponding in build dir {:?})",
+        template_path, build_path
+    );
 
     match create_dir(&build_path).await {
         Ok(_) => {}

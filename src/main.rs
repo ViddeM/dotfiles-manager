@@ -2,18 +2,20 @@
 extern crate log;
 
 mod builder;
+mod diff;
 mod error;
 mod linker;
 mod peeker;
 
 use builder::build_tree;
 use clap::{ArgAction, Parser, Subcommand};
+use diff::calculate_diff;
 use error::Errors;
 use linker::link_tree;
 use log::LevelFilter;
 use peeker::print_variables;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 struct Args {
@@ -52,6 +54,18 @@ pub struct Config {
     link_dir: PathBuf,
     variables_path: PathBuf,
     flags: Vec<String>,
+}
+
+impl Config {
+    fn with_build_path(&self, build_dir: &Path) -> Self {
+        Self {
+            template_dir: self.template_dir.clone(),
+            build_dir: build_dir.to_path_buf(),
+            link_dir: self.link_dir.clone(),
+            variables_path: self.variables_path.clone(),
+            flags: self.flags.clone(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -103,11 +117,8 @@ async fn run() -> Result<(), Errors> {
             link_tree(&cfg).await?;
         }
         Action::Diff => {
-            info!("building tree");
-            build_tree(&cfg).await?;
-
-            info!("checking differences between current state and dotfiles");
-            todo!("not implemented");
+            info!("checking diffs");
+            calculate_diff(&cfg).await?;
         }
         Action::Print => {
             info!("scanning tree");

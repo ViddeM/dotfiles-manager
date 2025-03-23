@@ -1,5 +1,5 @@
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, StripPrefixError};
 use thiserror::Error;
 
 #[derive(Default)]
@@ -25,6 +25,9 @@ pub enum InnerError {
 
     #[error("Unsupported variable type")]
     Type,
+
+    #[error("Strip prefix error: {0}")]
+    StripPefix(#[from] StripPrefixError),
 }
 
 impl From<Vec<Error>> for Errors {
