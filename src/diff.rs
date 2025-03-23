@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use colored::Colorize;
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use tempdir::TempDir;
@@ -26,17 +27,42 @@ pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Erro
 
     let diffs = diff_dir(temp_dir.path(), &cfg.link_dir, &PathBuf::new())?;
 
-    println!("Exists only locally:");
+    println!(
+        "{}",
+        format!(
+            "Exists only locally:{}",
+            if diffs.only_in_local.is_empty() {
+                " None"
+            } else {
+                ""
+            }
+        )
+        .bold()
+    );
     for add in diffs.only_in_local.iter() {
-        println!(" + {}", to_printable(&cfg.link_dir.join(add)));
+        println!(" + {}", to_printable(&cfg.link_dir.join(add)).green());
     }
 
-    println!("Exists only in repo:");
+    println!(
+        "{}",
+        format!(
+            "Exists only in repo:{}",
+            if diffs.only_in_repo.is_empty() {
+                " None"
+            } else {
+                ""
+            }
+        )
+        .bold()
+    );
     for miss in diffs.only_in_repo.iter() {
-        println!(" - {}", to_printable(&temp_dir.path().join(miss)));
+        println!(" - {}", to_printable(&temp_dir.path().join(miss)).red());
     }
 
-    println!("File exists in both but have been modified:");
+    println!(
+        "{}",
+        String::from("File exists in both but have been modified:").bold()
+    );
     for maybe in diffs.in_both.iter() {
         let local = cfg.link_dir.join(&maybe);
         let repo = temp_dir.path().join(&maybe);
@@ -51,14 +77,20 @@ pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Erro
         }
 
         if file_diff(&local, &repo)? {
-            println!(
-                " file differs {} != {}",
-                to_printable(&local),
-                to_printable(&repo)
-            );
             if line_changes {
-                println!("differences: ");
+                let file_name = format!("# {} #", to_printable(maybe));
+                let border = "#".repeat(file_name.len());
+                println!("{}", border.white().on_black());
+                println!("{}", file_name.white().on_black());
+                println!("{}", border.white().on_black());
+
                 print_file_diffs(&local, &repo)?;
+            } else {
+                println!(
+                    " file differs {} != {}",
+                    to_printable(&local).bright_green(),
+                    to_printable(&repo).bright_red()
+                );
             }
         } else {
             debug!(
@@ -210,7 +242,7 @@ fn print_file_diffs(first: &Path, second: &Path) -> Result<(), Errors> {
                     .lines()
                     .enumerate()
                 {
-                    println!(" - {}: {line}", start + i);
+                    println!("{}", format!(" - {}: {line}", start + i).bright_red());
                 }
             }
             similar::ChangeTag::Insert => {
@@ -221,7 +253,7 @@ fn print_file_diffs(first: &Path, second: &Path) -> Result<(), Errors> {
                     .lines()
                     .enumerate()
                 {
-                    println!(" + {}: {line}", start + i);
+                    println!("{}", format!(" + {}: {line}", start + i).bright_green());
                 }
             }
         }
