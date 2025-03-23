@@ -43,7 +43,11 @@ struct Args {
 #[derive(Subcommand)]
 enum Action {
     Sync,
-    Diff,
+    Diff {
+        /// Also print what has changed in files if they exist both locally and in repo.
+        #[arg(long, short)]
+        line_changes: bool,
+    },
     Print,
 }
 
@@ -116,9 +120,9 @@ async fn run() -> Result<(), Errors> {
             info!("linking tree");
             link_tree(&cfg).await?;
         }
-        Action::Diff => {
+        Action::Diff { line_changes } => {
             info!("checking diffs");
-            calculate_diff(&cfg).await?;
+            calculate_diff(&cfg, line_changes).await?;
         }
         Action::Print => {
             info!("scanning tree");

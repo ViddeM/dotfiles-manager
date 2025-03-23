@@ -1,11 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, read_dir, DirEntry},
-    io,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 
 use sha2::{Digest, Sha256};
+use similar::TextDiff;
 use tempdir::TempDir;
 
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
     Config,
 };
 
-pub async fn calculate_diff(cfg: &Config) -> Result<(), Errors> {
+pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Errors> {
     let temp_dir = TempDir::new("dofiles_diff_dir").with_location(&Path::new("/tmp"))?;
 
     let new_cfg = cfg.with_build_path(temp_dir.path());
@@ -55,6 +56,10 @@ pub async fn calculate_diff(cfg: &Config) -> Result<(), Errors> {
                 to_printable(&local),
                 to_printable(&repo)
             );
+            if line_changes {
+                println!("differences: ");
+                print_file_diffs(&local, &repo)?;
+            }
         } else {
             debug!(
                 " file matches:\n\t{}\n\t{}",
@@ -169,30 +174,6 @@ fn file_diff(first: &Path, second: &Path) -> Result<bool, Errors> {
     let (second_hash, second_size) = hash_file(second)?;
 
     Ok(first_size != second_size || first_hash != second_hash)
-
-    /* TODO: This can be used to find exact differences if necessary.
-
-    let first_bytes: Vec<u8> = first_file
-        .bytes()
-        .collect::<Result<_, _>>()
-        .with_location(first)?;
-
-    let second_bytes: Vec<u8> = second_file
-        .bytes()
-        .collect::<Result<_, _>>()
-        .with_location(second)?;
-
-    let diffs = capture_diff_slices(
-        similar::Algorithm::Myers,
-        first_bytes.as_slice(),
-        second_bytes.as_slice(),
-    );
-
-    Ok(diffs.iter().any(|d| match d.tag() {
-        similar::DiffTag::Equal => false,
-        _ => true,
-    }))
-    */
 }
 
 #[inline(always)]
@@ -203,6 +184,70 @@ fn hash_file(path: &Path) -> Result<(Vec<u8>, u64), Errors> {
     let hash = hasher.finalize().to_vec();
 
     Ok((hash, size))
+}
+
+fn print_file_diffs(first: &Path, second: &Path) -> Result<(), Errors> {
+    let Some(first_text) = get_file_text_or_print(first)? else {
+        return Ok(());
+    };
+
+    let Some(second_text) = get_file_text_or_print(second)? else {
+        return Ok(());
+    };
+
+    let diffs = TextDiff::from_lines(&first_text, &second_text);
+
+    for diff in diffs.iter_all_changes() {
+        match diff.tag() {
+            similar::ChangeTag::Equal => {
+                continue;
+            }
+            similar::ChangeTag::Delete => {
+                let start = diff.old_index().expect("Old index to exist");
+                for (i, line) in diff
+                    .as_str()
+                    .expect("Diff to be valid utf-8")
+                    .lines()
+                    .enumerate()
+                {
+                    println!(" - {}: {line}", start + i);
+                }
+            }
+            similar::ChangeTag::Insert => {
+                let start = diff.new_index().expect("new index to exist");
+                for (i, line) in diff
+                    .as_str()
+                    .expect("Diff to be valid utf-8")
+                    .lines()
+                    .enumerate()
+                {
+                    println!(" + {}: {line}", start + i);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn get_file_text_or_print(path: &Path) -> Result<Option<String>, Errors> {
+    let file = fs::File::open(path).with_location(path)?;
+
+    let bytes: Vec<u8> = file.bytes().collect::<Result<_, _>>().with_location(path)?;
+
+    let file_text = match String::from_utf8(bytes) {
+        Ok(f) => f,
+        Err(err) => {
+            debug!("Utf-8 error: {err:?}");
+            println!(
+                "Binary format, unable to generate diff, {}",
+                to_printable(path)
+            );
+            return Ok(None);
+        }
+    };
+
+    Ok(Some(file_text))
 }
 
 fn to_printable(path: &Path) -> String {
