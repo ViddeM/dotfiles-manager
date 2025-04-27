@@ -1,11 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fs::{self, read_dir, DirEntry},
+    collections::HashSet,
+    fs,
     io::{self, Read},
     path::{Path, PathBuf},
 };
 
 use colored::Colorize;
+use ignore::WalkBuilder;
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use tempdir::TempDir;
@@ -25,7 +26,8 @@ pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Erro
     info!("Building tree in {temp_dir:?}");
     build_tree(&new_cfg).await?;
 
-    let diffs = diff_dir(temp_dir.path(), &cfg.link_dir, &PathBuf::new())?;
+    // let diffs = diff_dir(temp_dir.path(), &cfg.link_dir, &PathBuf::new())?;
+    let diffs = diff_dir_ignore(temp_dir.path(), &cfg.link_dir)?;
 
     println!(
         "{}",
@@ -56,7 +58,7 @@ pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Erro
         .bold()
     );
     for miss in diffs.only_in_repo.iter() {
-        println!(" - {}", to_printable(&temp_dir.path().join(miss)).red());
+        println!(" - {}", to_printable(&cfg.template_dir.join(miss)).red());
     }
 
     println!(
@@ -89,7 +91,7 @@ pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Erro
                 println!(
                     " file differs {} != {}",
                     to_printable(&local).bright_green(),
-                    to_printable(&repo).bright_red()
+                    to_printable(&cfg.template_dir.join(&maybe)).bright_red()
                 );
             }
         } else {
@@ -113,30 +115,13 @@ struct Diffs {
     in_both: HashSet<PathBuf>,
 }
 
-impl Diffs {
-    fn join(&mut self, other: Self) {
-        other.only_in_repo.into_iter().for_each(|p| {
-            self.only_in_repo.insert(p);
-        });
+const DOTFILES_IGNORE_NAME: &str = ".dotfilesignore";
 
-        other.only_in_local.into_iter().for_each(|p| {
-            self.only_in_local.insert(p);
-        });
-
-        other.in_both.into_iter().for_each(|p| {
-            self.in_both.insert(p);
-        });
-    }
-}
-
-fn diff_dir(repo_base: &Path, local_base: &Path, relative: &Path) -> Result<Diffs, Errors> {
-    let repo = repo_base.join(relative);
-    let local = local_base.join(relative);
-
-    debug!("diffing {repo:?} and {local:?}");
-
-    let repo_dirs = get_dirs_map(repo_base, &repo)?;
-    let local_dirs = get_dirs_map(local_base, &local)?;
+fn diff_dir_ignore(repo_base: &Path, local_base: &Path) -> Result<Diffs, Errors> {
+    let local_walker = WalkBuilder::new(local_base)
+        .add_custom_ignore_filename(DOTFILES_IGNORE_NAME)
+        .hidden(false)
+        .build();
 
     let mut diffs = Diffs {
         only_in_repo: HashSet::new(),
@@ -144,61 +129,61 @@ fn diff_dir(repo_base: &Path, local_base: &Path, relative: &Path) -> Result<Diff
         in_both: HashSet::new(),
     };
 
-    for (rel_path, repo_entry) in repo_dirs.into_iter() {
-        let local_entry = match local_dirs.get(&rel_path) {
-            Some(e) => e,
-            None => {
-                debug!("Adding to only_in_repo as it was not found in local: {rel_path:?}");
-                diffs.only_in_repo.insert(rel_path.clone());
-                continue;
-            }
-        };
+    for p in local_walker {
+        let local_entry = p.with_location(local_base)?;
+        let local_path = local_entry.path();
+        debug!("Checking local path {local_path:?}");
+        let relative_path = local_entry
+            .path()
+            .strip_prefix(local_base)
+            .with_location(local_path)?;
+        debug!("relative path: {relative_path:?}");
+        let repo_path = repo_base.join(relative_path);
 
-        if local_entry.path().is_dir() != repo_entry.path().is_dir() {
-            // They have the same name but one is a dir and the other is not.
-            debug!("Adding to local and repo {rel_path:?} as their type differs");
-            diffs.only_in_local.insert(rel_path.clone());
-            diffs.only_in_repo.insert(rel_path);
+        let relative_path = relative_path.to_path_buf();
+
+        if !repo_path.exists() {
+            debug!("path only exists in local: {relative_path:?}");
+            diffs.only_in_local.insert(relative_path);
+        } else {
+            if repo_path.is_dir() != local_path.is_dir() {
+                debug!("Local path differs from repo path {relative_path:?}");
+                diffs.only_in_local.insert(relative_path.clone());
+                diffs.only_in_repo.insert(relative_path);
+            } else {
+                debug!("path exists in both: {relative_path:?}");
+                diffs.in_both.insert(relative_path);
+            }
+        }
+    }
+
+    let repo_walker = WalkBuilder::new(repo_base)
+        .add_custom_ignore_filename(DOTFILES_IGNORE_NAME)
+        .hidden(false)
+        .build();
+
+    for p in repo_walker {
+        let repo_entry = p.with_location(repo_base)?;
+        let repo_path = repo_entry.path();
+        debug!("Checking repo path {repo_path:?}");
+        let relative_path = repo_entry
+            .path()
+            .strip_prefix(repo_base)
+            .with_location(repo_path)?;
+        debug!("relative path: {relative_path:?}");
+
+        if diffs.only_in_repo.contains(relative_path) || diffs.in_both.contains(relative_path) {
+            debug!("Aleady handled {relative_path:?}");
             continue;
         }
 
-        if local_entry.path().is_dir() {
-            // Both local and repo are dirs, recurse.
-            let inner = diff_dir(repo_base, local_base, &rel_path)?;
-            diffs.join(inner);
-        }
-
-        debug!("Adding to in_both as it existed in both: {rel_path:?}");
-        diffs.in_both.insert(rel_path);
-    }
-
-    debug!("In both is done {:?}", diffs.in_both);
-
-    // Only in repo and in_both should now be populated, however, only_in_local may not be.
-    for path in local_dirs.into_keys() {
-        if !diffs.only_in_repo.contains(&path) && !diffs.in_both.contains(&path) {
-            debug!("Adding to only_in_local as it was not found in either only_in_repo or in_both {path:?}");
-            diffs.only_in_local.insert(path);
-        }
+        // We've already checked if it exists in both during the local walkthrough.
+        // If it exists in both but are of different types it should still be added to repo here.
+        debug!("path exists only in repo {relative_path:?}");
+        diffs.only_in_repo.insert(relative_path.to_path_buf());
     }
 
     Ok(diffs)
-}
-
-fn get_dirs_map(base: &Path, full: &Path) -> Result<HashMap<PathBuf, DirEntry>, Errors> {
-    let mut walker = read_dir(full).with_location(full)?;
-
-    let mut map = HashMap::new();
-
-    while let Some(entry) = walker.next() {
-        let entry = entry.with_location(full)?;
-
-        let full_path = entry.path();
-        let relative_path = full_path.strip_prefix(base).with_location(&entry.path())?;
-        map.insert(relative_path.to_path_buf(), entry);
-    }
-
-    Ok(map)
 }
 
 fn file_diff(first: &Path, second: &Path) -> Result<bool, Errors> {

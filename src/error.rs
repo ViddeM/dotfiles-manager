@@ -17,6 +17,9 @@ pub enum InnerError {
     #[error("IO Error: {0}")]
     Io(#[from] io::Error),
 
+    #[error("Ignore Error: {0}")]
+    IgnoreError(#[from] ignore::Error),
+
     #[error("Failed to parse template file")]
     Template(#[from] blueprint::Error),
 
