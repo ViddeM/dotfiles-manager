@@ -47,6 +47,9 @@ enum Action {
         /// Also print what has changed in files if they exist both locally and in repo.
         #[arg(long, short)]
         line_changes: bool,
+
+        /// Only show diffs for this local path (file or directory).
+        path: Option<PathBuf>,
     },
     Print,
 }
@@ -120,9 +123,9 @@ async fn run() -> Result<(), Errors> {
             info!("linking tree");
             link_tree(&cfg).await?;
         }
-        Action::Diff { line_changes } => {
+        Action::Diff { line_changes, path } => {
             info!("checking diffs");
-            calculate_diff(&cfg, line_changes).await?;
+            calculate_diff(&cfg, line_changes, path.as_deref()).await?;
         }
         Action::Print => {
             info!("scanning tree");

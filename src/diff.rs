@@ -17,7 +17,36 @@ use crate::{
     Config,
 };
 
-pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Errors> {
+/// Resolves a user supplied local path into a path relative to the link dir.
+fn relative_filter(cfg: &Config, path: &Path) -> Result<PathBuf, Errors> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().with_location(path)?.join(path)
+    };
+    let absolute = absolute.canonicalize().unwrap_or(absolute);
+    let link_dir = cfg
+        .link_dir
+        .canonicalize()
+        .unwrap_or_else(|_| cfg.link_dir.clone());
+
+    match absolute.strip_prefix(&link_dir) {
+        Ok(rel) => Ok(rel.to_path_buf()),
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{absolute:?} is not inside the link dir {link_dir:?}"),
+        )
+        .with_location(path)
+        .into()),
+    }
+}
+
+pub async fn calculate_diff(
+    cfg: &Config,
+    line_changes: bool,
+    path_filter: Option<&Path>,
+) -> Result<(), Errors> {
+    let filter = path_filter.map(|p| relative_filter(cfg, p)).transpose()?;
     let temp_dir = TempDir::new("dofiles_diff_dir").with_location(&Path::new("/tmp"))?;
 
     let new_cfg = cfg.with_build_path(temp_dir.path());
@@ -27,7 +56,14 @@ pub async fn calculate_diff(cfg: &Config, line_changes: bool) -> Result<(), Erro
     build_tree(&new_cfg).await?;
 
     // let diffs = diff_dir(temp_dir.path(), &cfg.link_dir, &PathBuf::new())?;
-    let diffs = diff_dir_ignore(temp_dir.path(), &cfg.link_dir)?;
+    let mut diffs = diff_dir_ignore(temp_dir.path(), &cfg.link_dir)?;
+
+    if let Some(filter) = &filter {
+        let keep = |p: &PathBuf| p.starts_with(filter);
+        diffs.only_in_local.retain(keep);
+        diffs.only_in_repo.retain(keep);
+        diffs.in_both.retain(keep);
+    }
 
     println!(
         "{}",
