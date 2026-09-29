@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
     fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 use colored::Colorize;
@@ -44,6 +45,7 @@ fn relative_filter(cfg: &Config, path: &Path) -> Result<PathBuf, Errors> {
 pub async fn calculate_diff(
     cfg: &Config,
     line_changes: bool,
+    use_delta: bool,
     path_filter: Option<&Path>,
 ) -> Result<(), Errors> {
     let filter = path_filter.map(|p| relative_filter(cfg, p)).transpose()?;
@@ -122,7 +124,7 @@ pub async fn calculate_diff(
                 println!("{}", file_name.white().on_black());
                 println!("{}", border.white().on_black());
 
-                print_file_diffs(&local, &repo)?;
+                print_file_diffs(&local, &repo, use_delta)?;
             } else {
                 println!(
                     " file differs {} != {}",
@@ -239,7 +241,7 @@ fn hash_file(path: &Path) -> Result<(Vec<u8>, u64), Errors> {
     Ok((hash, size))
 }
 
-fn print_file_diffs(first: &Path, second: &Path) -> Result<(), Errors> {
+fn print_file_diffs(first: &Path, second: &Path, use_delta: bool) -> Result<(), Errors> {
     let Some(first_text) = get_file_text_or_print(first)? else {
         return Ok(());
     };
@@ -247,6 +249,11 @@ fn print_file_diffs(first: &Path, second: &Path) -> Result<(), Errors> {
     let Some(second_text) = get_file_text_or_print(second)? else {
         return Ok(());
     };
+
+    if use_delta {
+        print_with_delta(first, second, &first_text, &second_text)?;
+        return Ok(());
+    }
 
     let diffs = TextDiff::from_lines(&first_text, &second_text);
 
@@ -278,6 +285,41 @@ fn print_file_diffs(first: &Path, second: &Path) -> Result<(), Errors> {
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Pipes a unified diff through `delta`.
+fn print_with_delta(
+    first: &Path,
+    second: &Path,
+    first_text: &str,
+    second_text: &str,
+) -> Result<(), Errors> {
+    let unified = TextDiff::from_lines(first_text, second_text)
+        .unified_diff()
+        .context_radius(3)
+        .header(&to_printable(first), &to_printable(second))
+        .to_string();
+
+    let delta_path = Path::new("delta");
+    let mut child = Command::new(delta_path)
+        .arg("--paging=never")
+        .stdin(Stdio::piped())
+        .spawn()
+        .with_location(delta_path)?;
+
+    let write_result = match child.stdin.take() {
+        Some(mut stdin) => stdin.write_all(unified.as_bytes()),
+        None => Ok(()),
+    };
+
+    let status = child.wait().with_location(delta_path)?;
+    write_result.with_location(delta_path)?;
+
+    if !status.success() {
+        panic!("Delta exited with {status}")
     }
 
     Ok(())

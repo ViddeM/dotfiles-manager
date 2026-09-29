@@ -48,6 +48,10 @@ enum Action {
         #[arg(long, short)]
         line_changes: bool,
 
+        /// Don't use `delta` for showing line changes, even if it is installed.
+        #[arg(long)]
+        no_delta: bool,
+
         /// Only show diffs for this local path (file or directory).
         path: Option<PathBuf>,
     },
@@ -123,9 +127,13 @@ async fn run() -> Result<(), Errors> {
             info!("linking tree");
             link_tree(&cfg).await?;
         }
-        Action::Diff { line_changes, path } => {
+        Action::Diff {
+            line_changes,
+            no_delta,
+            path,
+        } => {
             info!("checking diffs");
-            calculate_diff(&cfg, line_changes, path.as_deref()).await?;
+            calculate_diff(&cfg, line_changes, !no_delta, path.as_deref()).await?;
         }
         Action::Print => {
             info!("scanning tree");
