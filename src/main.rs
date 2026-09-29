@@ -42,7 +42,10 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Action {
-    Sync,
+    Sync {
+        /// Only sync this local path (file or directory).
+        path: Option<PathBuf>,
+    },
     Diff {
         /// Also print what has changed in files if they exist both locally and in repo.
         #[arg(long, short)]
@@ -65,6 +68,8 @@ pub struct Config {
     link_dir: PathBuf,
     variables_path: PathBuf,
     flags: Vec<String>,
+    /// If set, only paths (relative to the link dir) at or below this path are processed.
+    filter: Option<PathBuf>,
 }
 
 impl Config {
@@ -75,6 +80,24 @@ impl Config {
             link_dir: self.link_dir.clone(),
             variables_path: self.variables_path.clone(),
             flags: self.flags.clone(),
+            filter: self.filter.clone(),
+        }
+    }
+
+    /// Whether a directory should be traversed given the filter.
+    fn wants_dir(&self, relative: &Path) -> bool {
+        match &self.filter {
+            None => true,
+            Some(f) => relative.starts_with(f) || f.starts_with(relative),
+        }
+    }
+
+    /// Whether a file should be processed given the filter. `relative` is the output path
+    /// (i.e. without any template extension).
+    fn wants_file(&self, relative: &Path) -> bool {
+        match &self.filter {
+            None => true,
+            Some(f) => relative.starts_with(f),
         }
     }
 }
@@ -103,7 +126,7 @@ async fn run() -> Result<(), Errors> {
 
     let xdg_dirs = xdg::BaseDirectories::with_prefix("dotfiles").unwrap();
 
-    let cfg = Config {
+    let mut cfg = Config {
         template_dir: opt
             .template_dir
             .unwrap_or_else(|| xdg_dirs.create_config_directory("tree").expect("xdg")),
@@ -117,10 +140,16 @@ async fn run() -> Result<(), Errors> {
             .variables_path
             .unwrap_or_else(|| xdg_dirs.get_config_file("variables.toml")),
         flags: opt.flags,
+        filter: None,
     };
 
     match opt.action {
-        Action::Sync => {
+        Action::Sync { path } => {
+            cfg.filter = path
+                .as_deref()
+                .map(|p| diff::relative_filter(&cfg, p))
+                .transpose()?;
+
             info!("building tree");
             build_tree(&cfg).await?;
 

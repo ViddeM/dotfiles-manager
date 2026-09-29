@@ -34,9 +34,13 @@ async fn dir(cfg: &Config, relative: PathBuf) -> Result<(), Errors> {
         let new_relative = relative.join(entry.file_name());
 
         if meta.is_dir() {
-            dir_tasks.push(dir(cfg, new_relative));
+            if cfg.wants_dir(&new_relative) {
+                dir_tasks.push(dir(cfg, new_relative));
+            }
         } else if meta.is_file() {
-            file_tasks.push(file(cfg, new_relative));
+            if cfg.wants_file(&new_relative) {
+                file_tasks.push(file(cfg, new_relative));
+            }
         }
     }
 

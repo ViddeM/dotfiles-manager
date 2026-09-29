@@ -19,13 +19,20 @@ use crate::{
 };
 
 /// Resolves a user supplied local path into a path relative to the link dir.
-fn relative_filter(cfg: &Config, path: &Path) -> Result<PathBuf, Errors> {
+pub fn relative_filter(cfg: &Config, path: &Path) -> Result<PathBuf, Errors> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir().with_location(path)?.join(path)
     };
-    let absolute = absolute.canonicalize().unwrap_or(absolute);
+    // Only resolve the parent so that the path itself may be a symlink (e.g. a synced file).
+    let absolute = match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(name)) => parent
+            .canonicalize()
+            .map(|p| p.join(name))
+            .unwrap_or(absolute),
+        _ => absolute.canonicalize().unwrap_or(absolute),
+    };
     let link_dir = cfg
         .link_dir
         .canonicalize()
@@ -51,7 +58,8 @@ pub async fn calculate_diff(
     let filter = path_filter.map(|p| relative_filter(cfg, p)).transpose()?;
     let temp_dir = TempDir::new("dofiles_diff_dir").with_location(&Path::new("/tmp"))?;
 
-    let new_cfg = cfg.with_build_path(temp_dir.path());
+    let mut new_cfg = cfg.with_build_path(temp_dir.path());
+    new_cfg.filter = None;
 
     // Build the repository in a temporary directory such that templates are rendered properly etc.
     info!("Building tree in {temp_dir:?}");

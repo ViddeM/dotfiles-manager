@@ -82,9 +82,17 @@ async fn dir(cfg: &Config, env: &Env, relative: PathBuf) -> Result<(), Errors> {
         let new_relative = relative.join(entry.file_name());
 
         if meta.is_dir() {
-            dir_tasks.push(dir(cfg, env, new_relative));
+            if cfg.wants_dir(&new_relative) {
+                dir_tasks.push(dir(cfg, env, new_relative));
+            }
         } else if meta.is_file() {
-            file_tasks.push(file(cfg, env, new_relative));
+            let mut output = new_relative.clone();
+            if output.extension() == Some(OsStr::new(TEMPLATE_EXTENSION)) {
+                output.set_extension("");
+            }
+            if cfg.wants_file(&output) {
+                file_tasks.push(file(cfg, env, new_relative));
+            }
         }
     }
 
